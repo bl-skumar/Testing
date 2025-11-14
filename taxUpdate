@@ -1,1 +1,161 @@
+#!/usr/bin/env python3
+"""
+Utility script that bumps the `item_tax_rate` field to 18% for every item whose
+price exceeds 2,500 units. The script expects a JSON payload that represents
+either:
+
+1. A list of orders.
+2. A single order object.
+
+Each order should contain an `items` array, where every item is an object with
+at least the `price` and `item_tax_rate` fields.
+
+Example structure:
+
+[
+    {
+        "order_id": "ORD-1001",
+        "items": [
+            {"sku": "A123", "price": 2750, "item_tax_rate": 12.5},
+            {"sku": "B456", "price": 1300, "item_tax_rate": 5}
+        ]
+    }
+]
+
+Usage:
+
+    ./taxUpdate --input orders.json --output updated_orders.json
+
+The script mutates all in-memory orders before writing the updated data back
+to disk.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, MutableMapping
+
+
+Item = MutableMapping[str, Any]
+Order = MutableMapping[str, Any]
+
+
+def update_item_tax_rate(
+    orders: Iterable[Order],
+    *,
+    threshold: float = 2500,
+    new_tax_rate: float = 18.0,
+) -> int:
+    """
+    Iterates over the provided orders (and their nested items) and ensures that
+    any item whose `price` exceeds `threshold` receives the `new_tax_rate`.
+
+    Returns the number of items whose tax rate was updated.
+    """
+
+    updated = 0
+
+    for order in orders:
+        items = order.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            try:
+                price = float(item.get("price", 0))
+            except (TypeError, ValueError):
+                continue
+
+            if price > threshold:
+                current_rate = item.get("item_tax_rate")
+                if current_rate != new_tax_rate:
+                    item["item_tax_rate"] = new_tax_rate
+                    updated += 1
+
+    return updated
+
+
+def ensure_iterable_orders(data: Any) -> List[Order]:
+    """
+    Normalises the provided JSON payload into a list of order dictionaries.
+    """
+    if isinstance(data, list):
+        return [order for order in data if isinstance(order, dict)]
+    if isinstance(data, dict):
+        return [data]
+    raise ValueError("Input JSON must be an object or an array of objects.")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Update item tax rates to 18% when the price of an item exceeds 2500."
+        )
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        required=True,
+        type=Path,
+        help="Path to the input JSON file that describes the orders.",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help=(
+            "Path to write the updated JSON. Defaults to overwriting the input file."
+        ),
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=2500,
+        help="Price threshold that triggers the tax rate update. Default: 2500.",
+    )
+    parser.add_argument(
+        "--tax-rate",
+        type=float,
+        default=18.0,
+        help="Tax rate (in percent) to apply when the threshold is exceeded. Default: 18.",
+    )
+    return parser.parse_args()
+
+
+def load_orders(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def write_orders(path: Path, data: Any) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+
+def main() -> None:
+    args = parse_args()
+
+    raw_data = load_orders(args.input)
+    orders = ensure_iterable_orders(raw_data)
+
+    updated_count = update_item_tax_rate(
+        orders,
+        threshold=args.threshold,
+        new_tax_rate=args.tax_rate,
+    )
+
+    output_path = args.output or args.input
+    write_orders(output_path, raw_data)
+
+    print(
+        f"Updated {updated_count} item(s). "
+        f"Output written to '{output_path.resolve()}'."
+    )
+
+
+if __name__ == "__main__":
+    main()
 
