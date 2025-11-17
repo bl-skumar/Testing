@@ -1,1 +1,107 @@
+#!/usr/bin/env python3
+"""
+Utility script to update the product tax on an order based on the product price.
+
+Usage:
+    ./taxUpdate path/to/order.json --pretty
+    ./taxUpdate - < order.json
+
+Rules:
+    - price <= 2500  ➜  5% tax
+    - price >  2500  ➜ 18% tax
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any, Dict
+
+
+def determine_tax_rate(price: float) -> float:
+    """Return the tax rate for a given price."""
+    try:
+        price_value = float(price)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Product price must be a numeric value") from exc
+
+    return 0.05 if price_value <= 2500 else 0.18
+
+
+def apply_tax(order: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Mutate and return the order with updated tax information.
+
+    Expects the order to have a 'product_price' field.
+    """
+    if "product_price" not in order:
+        raise ValueError("Order payload must include 'product_price'")
+
+    price_value = float(order["product_price"])
+    tax_rate = determine_tax_rate(price_value)
+    order["product_tax_rate"] = tax_rate
+    order["product_tax_amount"] = round(price_value * tax_rate, 2)
+    return order
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Update product tax fields on an order JSON payload."
+    )
+    parser.add_argument(
+        "order",
+        help="Path to order JSON file or '-' to read from stdin.",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Where to write the updated order JSON (defaults to input path or stdout).",
+    )
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print JSON output with indentation.",
+    )
+    return parser.parse_args()
+
+
+def load_order(path: str) -> Dict[str, Any]:
+    data = (
+        json.load(sys.stdin)
+        if path == "-"
+        else json.loads(Path(path).read_text(encoding="utf-8"))
+    )
+    if not isinstance(data, dict):
+        raise ValueError("Order JSON must represent an object/dictionary")
+    return data
+
+
+def dump_order(order: Dict[str, Any], destination: str | None, pretty: bool) -> None:
+    kwargs = {"indent": 2} if pretty else {}
+    text = json.dumps(order, **kwargs)
+    if pretty:
+        text += "\n"
+
+    if destination:
+        Path(destination).write_text(text, encoding="utf-8")
+    else:
+        print(text, end="")
+
+
+def main() -> None:
+    args = parse_args()
+    order = load_order(args.order)
+    updated_order = apply_tax(order)
+
+    output_path = args.output
+    if output_path is None and args.order != "-":
+        output_path = args.order
+
+    dump_order(updated_order, output_path, args.pretty)
+
+
+if __name__ == "__main__":
+    main()
 
